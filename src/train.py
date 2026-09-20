@@ -1,425 +1,349 @@
+"""Train, select and honestly evaluate customer-churn models.
+
+The design goal is that no number in the report was produced by a model that
+had seen the rows it is scored on:
+
+* **Model selection** uses 5-fold cross-validation on the *training* split
+  only. The 20% test split is untouched until the final evaluation.
+* **Preprocessing** lives inside each pipeline, so it is re-fit per fold.
+* **Uncertainty** on the headline metrics comes from bootstrapping the test
+  set, including a paired interval on the gap between the two contenders.
+* **Probabilities** are calibrated separately from the ranking, because the
+  class weighting that helps recall makes the raw scores far too high.
+* **Customer risk scores** are out-of-fold: every customer is scored by a
+  model that never saw them, not by one trained on them.
+* **The threshold** is chosen on a dollar value with stated assumptions, not
+  by staring at F1.
+
+Run: ``python src/train.py``  (after ``python src/download_data.py``)
 """
-Train and evaluate customer churn prediction models.
 
-Generates:
-  - model_results.csv: Model performance comparison
-  - feature_importance.csv: Top features by model
-  - threshold_analysis.csv: Metrics at different probability thresholds
-  - top_churn_risks.csv: Predicted churn scores for all customers
+from __future__ import annotations
 
-Models compared:
-  1. Majority-class baseline (naive classifier)
-  2. Logistic Regression (linear, interpretable)
-  3. Random Forest (ensemble, nonlinear)
+import json
 
-All preprocessing is fit only on training data to prevent leakage.
-"""
+import matplotlib
 
-import sys
-from pathlib import Path
-import warnings
-
-import pandas as pd
-import numpy as np
-from sklearn.compose import ColumnTransformer
-from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    classification_report,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+from sklearn.base import clone  # noqa: E402
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve  # noqa: E402
+from sklearn.dummy import DummyClassifier  # noqa: E402
+from sklearn.ensemble import RandomForestClassifier  # noqa: E402
+from sklearn.inspection import permutation_importance  # noqa: E402
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.metrics import (  # noqa: E402
+    accuracy_score, average_precision_score, brier_score_loss, f1_score,
+    precision_recall_curve, precision_score, recall_score, roc_auc_score,
+    roc_curve,
 )
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_validate  # noqa: E402
 
-warnings.filterwarnings('ignore')
+from common import (  # noqa: E402
+    CV_FOLDS, FIGURES, N_BOOT, OFFER_COST, REPORTS, SAVE_RATE, SEED,
+    THRESHOLDS, expected_net_value, load_clean, make_pipeline, split,
+)
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "raw" / "telco_customer_churn.csv"
-OUT = ROOT / "reports"
-OUT.mkdir(exist_ok=True)
-
-
-def load_and_prepare_data():
-    """
-    Load and prepare data for modeling.
-
-    Returns:
-        tuple: (X, y) feature matrix and target vector, with customerID removed.
-
-    Raises:
-        FileNotFoundError: If dataset not found.
-    """
-    if not DATA.exists():
-        print(f"✗ Dataset not found: {DATA}", file=sys.stderr)
-        print(f"  Run: python src/download_data.py", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        df = pd.read_csv(DATA)
-    except Exception as e:
-        print(f"✗ Error reading CSV: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    # Clean: convert TotalCharges to numeric
-    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
-    df = df.dropna(subset=["TotalCharges"]).copy()
-
-    # Target variable: Churn (Yes -> 1, No -> 0)
-    y = (df.pop("Churn") == "Yes").astype(int)
-
-    # Remove non-predictive ID column
-    X = df.drop(columns=["customerID"])
-
-    print(f"✓ Loaded data: {X.shape[0]} samples, {X.shape[1]} features")
-    print(f"  Churn distribution: {(y == 0).sum()} no-churn, {(y == 1).sum()} churn")
-    print(f"  Churn rate: {y.mean():.1%}")
-
-    return X, y, df
+plt.rcParams.update({"figure.dpi": 130, "axes.spines.top": False,
+                     "axes.spines.right": False, "axes.grid": True,
+                     "grid.alpha": 0.25, "font.size": 10})
+BLUE, ORANGE, GREY = "#2a5bd7", "#d97a1a", "#8a93a3"
 
 
-def build_preprocessor(X_train):
-    """
-    Build a leakage-safe preprocessing pipeline.
-
-    The preprocessor is fit only on training data.
-
-    Args:
-        X_train: Training feature matrix.
-
-    Returns:
-        ColumnTransformer: Fitted preprocessor.
-    """
-    numeric_cols = X_train.select_dtypes(include="number").columns.tolist()
-    categorical_cols = X_train.select_dtypes(exclude="number").columns.tolist()
-
-    numeric_transformer = Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
-
-    categorical_transformer = Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-    ])
-
-    preprocessor = ColumnTransformer([
-        ("num", numeric_transformer, numeric_cols),
-        ("cat", categorical_transformer, categorical_cols),
-    ])
-
-    return preprocessor
-
-
-def evaluate_model_at_threshold(y_true, y_proba, threshold=0.5):
-    """Evaluate model at a specific probability threshold."""
-    y_pred = (y_proba >= threshold).astype(int)
-    
+def candidates(X: pd.DataFrame) -> dict:
     return {
-        "threshold": threshold,
-        "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall": recall_score(y_true, y_pred, zero_division=0),
-        "f1": f1_score(y_true, y_pred, zero_division=0),
+        "majority_baseline": make_pipeline(DummyClassifier(strategy="prior"), X),
+        "logistic_regression": make_pipeline(LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=SEED), X),
+        "random_forest": make_pipeline(RandomForestClassifier(
+            n_estimators=400, max_depth=10, min_samples_leaf=3,
+            class_weight="balanced", random_state=SEED, n_jobs=-1), X),
     }
 
 
-def evaluate_model(name, model, X_test, y_test):
-    """
-    Evaluate model on test set.
+def metrics_at(y, proba, threshold=0.5) -> dict:
+    pred = (proba >= threshold).astype(int)
+    return {
+        "accuracy": accuracy_score(y, pred),
+        "precision": precision_score(y, pred, zero_division=0),
+        "recall": recall_score(y, pred, zero_division=0),
+        "f1": f1_score(y, pred, zero_division=0),
+        "roc_auc": roc_auc_score(y, proba),
+        "pr_auc": average_precision_score(y, proba),
+    }
 
-    Args:
-        name: Model name for display.
-        model: Fitted pipeline with predict_proba method.
-        X_test: Test features.
-        y_test: Test labels.
 
-    Returns:
-        tuple: (metrics dict, probabilities)
-    """
-    y_proba = model.predict_proba(X_test)[:, 1]
-    y_pred = (y_proba >= 0.5).astype(int)
+def bootstrap(y, best: np.ndarray, rival: np.ndarray, n: int = N_BOOT) -> dict:
+    """95% percentile intervals from resampling the test set. Both models are
+    scored on the same resample, so the *gap* interval is properly paired."""
+    rng = np.random.default_rng(SEED)
+    draws = {"roc_auc": [], "pr_auc": [], "gap_pr_auc": []}
+    while len(draws["roc_auc"]) < n:
+        idx = rng.integers(0, len(y), len(y))
+        if y[idx].min() == y[idx].max():
+            continue
+        draws["roc_auc"].append(roc_auc_score(y[idx], best[idx]))
+        draws["pr_auc"].append(average_precision_score(y[idx], best[idx]))
+        draws["gap_pr_auc"].append(average_precision_score(y[idx], best[idx])
+                                   - average_precision_score(y[idx], rival[idx]))
+    out = {k: [float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5))]
+           for k, v in draws.items()}
+    out["share_best_ahead"] = float(np.mean(np.array(draws["gap_pr_auc"]) > 0))
+    return out
+
+
+def fig_curves(y, scored: dict) -> None:
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4.2))
+    for (name, p), c in zip(scored.items(), (BLUE, ORANGE)):
+        pr, rc, _ = precision_recall_curve(y, p)
+        ax[0].plot(rc, pr, color=c, label=f"{name} (AP {average_precision_score(y, p):.3f})")
+        fpr, tpr, _ = roc_curve(y, p)
+        ax[1].plot(fpr, tpr, color=c, label=f"{name} (AUC {roc_auc_score(y, p):.3f})")
+    ax[0].axhline(y.mean(), color=GREY, ls="--", lw=1.2)
+    ax[0].set(title="Precision-recall (test set)", xlabel="Recall", ylabel="Precision", ylim=(0, 1))
+    ax[1].plot([0, 1], [0, 1], color=GREY, ls="--", lw=1.2)
+    ax[1].set(title="ROC (test set)", xlabel="False positive rate", ylabel="True positive rate")
+    for a in ax:
+        a.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(FIGURES / "07_model_curves.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def fig_calibration(y, raw, cal) -> None:
+    fig, ax = plt.subplots(figsize=(5, 4.4))
+    for label, p, c in (("As trained (class-weighted)", raw, ORANGE), ("Calibrated", cal, BLUE)):
+        t, m = calibration_curve(y, p, n_bins=8, strategy="quantile")
+        ax.plot(m, t, "o-", color=c, label=label)
+    ax.plot([0, 1], [0, 1], color=GREY, ls="--", lw=1.2)
+    ax.set(title="Calibration (test set)", xlabel="Predicted churn probability",
+           ylabel="Observed churn rate", xlim=(0, 1), ylim=(0, 1))
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(FIGURES / "08_calibration.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def fig_value(df: pd.DataFrame, best_t: float) -> None:
+    fig, ax = plt.subplots(figsize=(6, 4.2))
+    ax.plot(df["threshold"], df["net_value"], "o-", color=BLUE)
+    ax.axvline(best_t, color=ORANGE, ls="--", lw=1.2)
+    ax.axhline(0, color=GREY, lw=1)
+    ax.set(title="Net value of the outreach campaign by threshold",
+           xlabel="Contact customers scored at or above",
+           ylabel="Net value, illustrative $ (test set)")
+    fig.tight_layout()
+    fig.savefig(FIGURES / "09_threshold_value.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def fig_importance(imp: pd.DataFrame) -> None:
+    top = imp.head(10).iloc[::-1]
+    fig, ax = plt.subplots(figsize=(7, 4.6))
+    ax.barh(top["feature"], top["importance"], xerr=top["std"], color=BLUE, height=0.65,
+            error_kw={"ecolor": GREY, "capsize": 3})
+    ax.set(title="Permutation importance on the test set",
+           xlabel="Drop in average precision when the column is shuffled")
+    ax.grid(False, axis="y")
+    fig.tight_layout()
+    fig.savefig(FIGURES / "10_permutation_importance.png", bbox_inches="tight")
+    plt.close(fig)
+
+
+def main() -> None:
+    REPORTS.mkdir(exist_ok=True)
+    FIGURES.mkdir(parents=True, exist_ok=True)
+
+    X, y, ids = load_clean()
+    X_tr, X_te, y_tr, y_te, id_tr, id_te = split(X, y, ids)
+    y_te_arr = y_te.to_numpy()
+    print(f"customers {len(X):,} | train {len(X_tr):,} | test {len(X_te):,} | "
+          f"churn rate train {y_tr.mean():.1%}, test {y_te.mean():.1%}")
+
+    models = candidates(X_tr)
+
+    # ---- 1. select on cross-validation, training rows only ---------------
+    cv = StratifiedKFold(CV_FOLDS, shuffle=True, random_state=SEED)
+    cv_rows = []
+    for name, pipe in models.items():
+        r = cross_validate(clone(pipe), X_tr, y_tr, cv=cv, n_jobs=1,
+                           scoring={"roc_auc": "roc_auc", "pr_auc": "average_precision"})
+        cv_rows.append({"model": name,
+                        "cv_roc_auc": r["test_roc_auc"].mean(), "cv_roc_auc_std": r["test_roc_auc"].std(),
+                        "cv_pr_auc": r["test_pr_auc"].mean(), "cv_pr_auc_std": r["test_pr_auc"].std()})
+        print(f"  CV {name:20s} PR-AUC {cv_rows[-1]['cv_pr_auc']:.3f} "
+              f"+/- {cv_rows[-1]['cv_pr_auc_std']:.3f}")
+    cv_df = pd.DataFrame(cv_rows)
+    real = cv_df[cv_df["model"] != "majority_baseline"]
+    best_name = real.loc[real["cv_pr_auc"].idxmax(), "model"]
+    rival_name = next(n for n in real["model"] if n != best_name)
+    print(f"selected by CV PR-AUC: {best_name}")
+
+    # ---- 2. fit on all training rows, evaluate on the test set once -------
+    scored, test_rows = {}, []
+    for name, pipe in models.items():
+        pipe.fit(X_tr, y_tr)
+        scored[name] = pipe.predict_proba(X_te)[:, 1]
+        test_rows.append({"model": name, **metrics_at(y_te_arr, scored[name])})
+    test_df = pd.DataFrame(test_rows)
+    print(test_df.round(3).to_string(index=False))
+    ci = bootstrap(y_te_arr, scored[best_name], scored[rival_name])
+
+    # ---- 3. calibrate the winner; ranking is unchanged --------------------
+    calibrated = CalibratedClassifierCV(clone(models[best_name]), method="isotonic", cv=CV_FOLDS)
+    calibrated.fit(X_tr, y_tr)
+    cal = calibrated.predict_proba(X_te)[:, 1]
+    brier = {"before": brier_score_loss(y_te_arr, scored[best_name]),
+             "after": brier_score_loss(y_te_arr, cal)}
+    print(f"Brier {brier['before']:.3f} -> {brier['after']:.3f}")
+
+    # ---- 4. threshold on business value (calibrated probabilities) --------
+    annual_revenue = float(X_tr["MonthlyCharges"].mean() * 12)
+    value_df = pd.DataFrame([
+        {**expected_net_value(y_te_arr, cal, t, annual_revenue),
+         **{k: v for k, v in metrics_at(y_te_arr, cal, t).items()
+            if k in ("precision", "recall", "f1")}}
+        for t in THRESHOLDS])
+    best_t = float(value_df.loc[value_df["net_value"].idxmax(), "threshold"])
+    print(value_df.round(3).to_string(index=False))
+
+    # ---- 5. permutation importance on the test set ------------------------
+    r = permutation_importance(models[best_name], X_te, y_te, scoring="average_precision",
+                               n_repeats=15, random_state=SEED, n_jobs=1)
+    imp = (pd.DataFrame({"feature": X_te.columns, "importance": r.importances_mean,
+                         "std": r.importances_std})
+           .sort_values("importance", ascending=False).reset_index(drop=True))
+
+    # ---- 6. out-of-fold risk scores for every customer --------------------
+    oof = cross_val_predict(clone(models[best_name]), X, y, cv=cv, method="predict_proba")[:, 1]
+    risk = (pd.DataFrame({"customerID": ids.values, "churn_rank_score": oof, "churned": y.values})
+            .sort_values("churn_rank_score", ascending=False).reset_index(drop=True))
+
+    # ---- outputs ---------------------------------------------------------
+    fig_curves(y_te_arr, {n: scored[n] for n in (best_name, rival_name)})
+    fig_calibration(y_te_arr, scored[best_name], cal)
+    fig_value(value_df, best_t)
+    fig_importance(imp)
+
+    cv_df.merge(test_df, on="model").to_csv(REPORTS / "model_results.csv", index=False)
+    imp.to_csv(REPORTS / "feature_importance.csv", index=False)
+    value_df.to_csv(REPORTS / "threshold_analysis.csv", index=False)
+    risk.to_csv(REPORTS / "top_churn_risks.csv", index=False)
 
     metrics = {
-        "model": name,
-        "accuracy": accuracy_score(y_test, y_pred),
-        "precision": precision_score(y_test, y_pred, zero_division=0),
-        "recall": recall_score(y_test, y_pred, zero_division=0),
-        "f1": f1_score(y_test, y_pred, zero_division=0),
-        "roc_auc": roc_auc_score(y_test, y_proba),
-        "pr_auc": average_precision_score(y_test, y_proba),
+        "n_train": len(X_tr), "n_test": len(X_te), "test_churn_rate": float(y_te.mean()),
+        "best_model": best_name, "rival_model": rival_name,
+        "cv": cv_rows, "test": test_rows, "bootstrap_95ci": ci, "brier": brier,
+        "assumptions": {"offer_cost": OFFER_COST, "save_rate": SAVE_RATE,
+                        "annual_revenue_per_saved_customer": annual_revenue},
+        "recommended_threshold": best_t,
+        "value_by_threshold": value_df.to_dict(orient="records"),
+        "top_features": imp.head(8)[["feature", "importance"]].to_dict(orient="records"),
+        "oof_top_decile_churn_rate": float(risk.head(len(risk) // 10)["churned"].mean()),
+        "overall_churn_rate": float(y.mean()),
     }
-
-    return metrics, y_proba
-
-
-def print_model_report(name, y_test, y_proba, metrics):
-    """Print classification report and key metrics."""
-    y_pred_05 = (y_proba >= 0.5).astype(int)
-    
-    print("\n" + "=" * 70)
-    print(f"MODEL: {name.upper()}")
-    print("=" * 70)
-    print(f"Accuracy:  {metrics['accuracy']:.4f}")
-    print(f"Precision: {metrics['precision']:.4f}  (of predicted churners, % that actually churn)")
-    print(f"Recall:    {metrics['recall']:.4f}  (of actual churners, % that we catch)")
-    print(f"F1 Score:  {metrics['f1']:.4f}")
-    print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
-    print(f"PR-AUC:    {metrics['pr_auc']:.4f}")
-    print("\nClassification Report (threshold=0.5):")
-    print(classification_report(y_test, y_pred_05, target_names=["No Churn", "Churn"], digits=3))
+    (REPORTS / "metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
+    write_report(metrics, value_df, imp, risk)
+    print("done")
 
 
-def extract_feature_importance(preprocessor, models_dict, X_train, feature_names_original):
-    """
-    Extract and save feature importance for each model.
-    
-    Args:
-        preprocessor: Fitted ColumnTransformer.
-        models_dict: Dict of model_name -> fitted estimator (after preprocessor).
-        X_train: Original training features.
-        feature_names_original: Original feature names.
-    """
-    numeric_cols = X_train.select_dtypes(include="number").columns.tolist()
-    categorical_cols = X_train.select_dtypes(exclude="number").columns.tolist()
-    
-    # Get one-hot encoded feature names
-    onehot_encoder = preprocessor.named_transformers_["cat"].named_steps["onehot"]
-    cat_feature_names = onehot_encoder.get_feature_names_out(categorical_cols).tolist()
-    
-    # Full feature names after preprocessing: numeric + one-hot encoded categoricals
-    all_feature_names = numeric_cols + cat_feature_names
-    
-    results_list = []
-    
-    # Logistic Regression coefficients
-    if "logistic_regression" in models_dict:
-        lr_model = models_dict["logistic_regression"]
-        coeffs = lr_model.coef_[0]
-        
-        # Sort by absolute value (magnitude of importance)
-        importance_df = pd.DataFrame({
-            "model": "logistic_regression",
-            "feature": all_feature_names,
-            "importance": coeffs,
-            "abs_importance": np.abs(coeffs),
-        }).sort_values("abs_importance", ascending=False)
-        
-        results_list.append(importance_df[["model", "feature", "importance"]])
-        
-        print("\nTop 10 Features (Logistic Regression - Coefficients):")
-        print(importance_df[["feature", "importance"]].head(10).to_string(index=False))
-    
-    # Random Forest feature importances
-    if "random_forest" in models_dict:
-        rf_model = models_dict["random_forest"]
-        importances = rf_model.feature_importances_
-        
-        importance_df = pd.DataFrame({
-            "model": "random_forest",
-            "feature": all_feature_names,
-            "importance": importances,
-        }).sort_values("importance", ascending=False)
-        
-        results_list.append(importance_df[["model", "feature", "importance"]])
-        
-        print("\nTop 10 Features (Random Forest - Feature Importances):")
-        print(importance_df[["feature", "importance"]].head(10).to_string(index=False))
-    
-    if results_list:
-        combined = pd.concat(results_list, ignore_index=True)
-        combined.to_csv(OUT / "feature_importance.csv", index=False)
-        print(f"\n✓ Saved feature importance to feature_importance.csv")
+def write_report(m: dict, value_df: pd.DataFrame, imp: pd.DataFrame, risk: pd.DataFrame) -> None:
+    best, rival = m["best_model"], m["rival_model"]
+    t = pd.DataFrame(m["test"]).set_index("model")
+    cv = pd.DataFrame(m["cv"]).set_index("model")
+    table = t.join(cv[["cv_pr_auc", "cv_pr_auc_std"]]).reset_index()
+    ci = m["bootstrap_95ci"]
+    a = m["assumptions"]
+    best_row = value_df.loc[value_df["threshold"] == m["recommended_threshold"]].iloc[0]
+    tied = ci["gap_pr_auc"][0] <= 0 <= ci["gap_pr_auc"][1]
+    top10 = m["oof_top_decile_churn_rate"]
+    text = f"""# Model report
 
+Generated by `src/train.py`. Dataset: IBM Telco Customer Churn.
 
-def analyze_thresholds(model, X_test, y_test):
-    """
-    Analyze model performance at different probability thresholds.
-    
-    Args:
-        model: Fitted pipeline.
-        X_test: Test features.
-        y_test: Test labels.
-    
-    Returns:
-        pd.DataFrame: Threshold analysis results.
-    """
-    y_proba = model.predict_proba(X_test)[:, 1]
-    
-    thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
-    results = []
-    
-    for threshold in thresholds:
-        metrics = evaluate_model_at_threshold(y_test, y_proba, threshold)
-        results.append(metrics)
-    
-    results_df = pd.DataFrame(results)
-    results_df.to_csv(OUT / "threshold_analysis.csv", index=False)
-    
-    print("\n" + "=" * 70)
-    print("THRESHOLD ANALYSIS")
-    print("=" * 70)
-    print(results_df.to_string(index=False))
-    print("=" * 70)
-    print("Note: Threshold 0.5 is default. Adjust based on business priorities:")
-    print("  - Higher threshold (0.6-0.7): Fewer alerts, higher precision (avoid false alarms)")
-    print("  - Lower threshold (0.3-0.4): More alerts, higher recall (catch more churners)")
-    print(f"\n✓ Saved threshold analysis to threshold_analysis.csv")
-    
-    return results_df
+**Split.** {m['n_train']:,} training and {m['n_test']:,} test customers (stratified 80/20).
+Test churn rate {m['test_churn_rate']:.1%}. Models were **selected by 5-fold cross-validation
+on the training split only**; the test set was scored once.
 
+## Results
 
-def generate_risk_scores(model, X_all, df_original):
-    """
-    Generate predicted churn probabilities for all customers.
+{table.to_markdown(index=False, floatfmt=".3f")}
 
-    Args:
-        model: Fitted model pipeline.
-        X_all: Feature matrix for all data.
-        df_original: Original dataframe (for customer IDs).
-    """
-    risk_scores = pd.DataFrame({
-        "customerID": df_original["customerID"].values,
-        "predicted_churn_probability": model.predict_proba(X_all)[:, 1],
-    }).sort_values("predicted_churn_probability", ascending=False)
+Accuracy is shown for completeness but is a weak guide here: a model that predicts
+"no churn" for everyone already scores {1 - m['test_churn_rate']:.0%}. PR-AUC is the honest
+number, and the no-skill floor for it is the churn rate ({m['test_churn_rate']:.2f}).
 
-    risk_scores.to_csv(OUT / "top_churn_risks.csv", index=False)
-    print(f"\n✓ Saved predicted churn probabilities to top_churn_risks.csv")
+![Curves](figures/07_model_curves.png)
 
-    # Print top 10 risks
-    print("\nTop 10 Customers by Predicted Churn Risk:")
-    print(risk_scores.head(10).to_string(index=False))
+## How much noise is in these numbers
 
-    return risk_scores
+Bootstrapping the test set {2000:,} times gives 95% intervals for **{best}**:
+ROC-AUC {ci['roc_auc'][0]:.3f} to {ci['roc_auc'][1]:.3f}, PR-AUC {ci['pr_auc'][0]:.3f} to {ci['pr_auc'][1]:.3f}.
 
+**{best} vs {rival}.** The paired PR-AUC gap has a 95% interval of
+{ci['gap_pr_auc'][0]:+.3f} to {ci['gap_pr_auc'][1]:+.3f}; {best} was ahead in
+{ci['share_best_ahead']:.0%} of resamples. {"That interval includes zero, so the two models are statistically indistinguishable on this data. The choice of " + best + " rests on cross-validation and on being simpler and more interpretable." if tied else "That interval excludes zero."}
 
-def main():
-    """Train and evaluate all models."""
-    print("\n" + "=" * 70)
-    print("CUSTOMER CHURN PREDICTION: MODEL TRAINING & EVALUATION")
-    print("=" * 70)
+## Probabilities: rank first, calibrate second
 
-    # Load data
-    X, y, df_original = load_and_prepare_data()
+Both models use `class_weight="balanced"`, which improves recall but makes raw scores
+read far higher than the true churn rate. Isotonic calibration (fit with cross-validation
+on training rows) fixes that without changing the ranking: Brier score
+**{m['brier']['before']:.3f} to {m['brier']['after']:.3f}**. Use the calibrated model when a
+number will be read as "this customer has an X% chance of leaving".
 
-    # Train-test split (stratified to preserve churn rate)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
-    )
-    print(f"\nTrain-test split: {len(X_train)} train, {len(X_test)} test (80/20)")
-    print(f"  Train churn rate: {y_train.mean():.1%}")
-    print(f"  Test churn rate:  {y_test.mean():.1%}")
+![Calibration](figures/08_calibration.png)
 
-    # Build preprocessor
-    print("\nBuilding preprocessing pipeline...")
-    preprocessor = build_preprocessor(X_train)
+## Choosing a threshold by dollars, not by F1
 
-    # Define models
-    models_config = {
-        "majority_baseline": DummyClassifier(strategy="most_frequent"),
-        "logistic_regression": LogisticRegression(
-            max_iter=2000,
-            class_weight="balanced",
-            random_state=42,
-        ),
-        "random_forest": RandomForestClassifier(
-            n_estimators=400,
-            max_depth=10,
-            min_samples_leaf=3,
-            class_weight="balanced",
-            random_state=42,
-            n_jobs=-1,
-        ),
-    }
+Assumptions, **illustrative and not from any real company**: each retention offer costs
+${a['offer_cost']:.0f}, an offer keeps {a['save_rate']:.0%} of the would-be churners it reaches,
+and a kept customer is worth ${a['annual_revenue_per_saved_customer']:.0f} of retained
+annual billing (the average monthly bill times 12).
 
-    # Train and evaluate each model
-    results_list = []
-    best_model = None
-    best_roc_auc = -1
-    fitted_estimators = {}
+{value_df[['threshold', 'contacted', 'true_churners_reached', 'wasted_offers', 'net_value', 'precision', 'recall']].to_markdown(index=False, floatfmt=".2f")}
 
-    for model_name, estimator in models_config.items():
-        print(f"\nTraining {model_name}...")
+There is a closed-form check on that. With calibrated probabilities, contacting a customer
+with churn probability *p* is worth it when *p* x (save rate x annual value) exceeds the
+offer cost, i.e. above **{a['offer_cost'] / (a['save_rate'] * a['annual_revenue_per_saved_customer']):.2f}**. The grid search lands
+next to that break-even, which is a useful sanity check on the calibration.
 
-        # Create pipeline: preprocess -> model
-        pipeline = Pipeline([
-            ("preprocess", preprocessor),
-            ("model", estimator),
-        ])
+On these assumptions the best cut-off is **{m['recommended_threshold']:.2f}**: contact
+{int(best_row['contacted'])} customers, reach {int(best_row['true_churners_reached'])} real churners, waste
+{int(best_row['wasted_offers'])} offers, net **${best_row['net_value']:,.0f}** on the test set. Change the
+assumptions in `src/common.py` and the answer moves, which is the point: the right threshold
+is a business decision, not a property of the model.
 
-        # Train
-        pipeline.fit(X_train, y_train)
+![Value by threshold](figures/09_threshold_value.png)
 
-        # Evaluate
-        metrics, y_proba = evaluate_model(model_name, pipeline, X_test, y_test)
-        results_list.append(metrics)
+## What drives it
 
-        # Print report
-        print_model_report(model_name, y_test, y_proba, metrics)
+Permutation importance on the test set (how much average precision falls when a column is
+shuffled), so it is measured on data the model has not seen and is reported per original
+column rather than split across one-hot fragments:
 
-        # Track best model and fitted estimators for feature importance
-        if metrics["roc_auc"] > best_roc_auc:
-            best_roc_auc = metrics["roc_auc"]
-            best_model = pipeline
-        
-        fitted_estimators[model_name] = pipeline.named_steps["model"]
+![Importance](figures/10_permutation_importance.png)
 
-    # Summary table
-    results_df = pd.DataFrame(results_list).sort_values("roc_auc", ascending=False)
-    results_df.to_csv(OUT / "model_results.csv", index=False)
+## Customer risk scores
 
-    print("\n" + "=" * 70)
-    print("MODEL COMPARISON (sorted by ROC-AUC)")
-    print("=" * 70)
-    print(results_df.to_string(index=False))
-    print(f"\n✓ Saved model comparison to model_results.csv")
+`reports/top_churn_risks.csv` scores every customer **out-of-fold**: each one is scored by a
+model trained on the other folds, never by a model that saw them. The top-scored 10% of
+customers churned at **{top10:.0%}**, against {m['overall_churn_rate']:.0%} overall.
 
-    # Extract feature importance
-    print("\n" + "=" * 70)
-    print("FEATURE IMPORTANCE ANALYSIS")
-    print("=" * 70)
-    extract_feature_importance(preprocessor, fitted_estimators, X_train, X.columns.tolist())
+## Honest limitations
 
-    # Threshold analysis on best model
-    print("\n" + "=" * 70)
-    best_model_name = results_df.iloc[0]['model']
-    print(f"Running threshold analysis on best model: {best_model_name}")
-    print("=" * 70)
-    analyze_thresholds(best_model, X_test, y_test)
-
-    # Generate risk scores using best model
-    print("\n" + "=" * 70)
-    print(f"RISK SCORING (using {best_model_name} model)")
-    print("=" * 70)
-
-    # Reload original data to get customerID
-    X_all = df_original.drop(columns=["customerID", "Churn"])
-    generate_risk_scores(best_model, X_all, df_original)
-
-    print("\n" + "=" * 70)
-    print("✓ TRAINING COMPLETE")
-    print("=" * 70)
-    print("\nGenerated outputs:")
-    print(f"  ✓ {OUT / 'model_results.csv'}")
-    print(f"  ✓ {OUT / 'feature_importance.csv'}")
-    print(f"  ✓ {OUT / 'threshold_analysis.csv'}")
-    print(f"  ✓ {OUT / 'top_churn_risks.csv'}")
-    print(f"\nCheck reports/ directory for all outputs.")
+1. **Association, not causation.** The model says which customers look like past churners,
+   not that changing a contract type would keep them.
+2. **One snapshot.** The data has no dates, so the split is random, not temporal. A real
+   deployment should be validated on a later period.
+3. **Public sample data.** IBM's Telco set is a teaching dataset with fixed columns; results
+   will not transfer to another operator.
+4. **The dollar figures are assumptions**, stated above and easy to change.
+"""
+    (REPORTS / "model_report.md").write_text(text)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"\n✗ Error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    main()

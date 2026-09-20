@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
-data/raw/*.csv
-reports/figures/*.png
-reports/*.csv
+.pytest_cache/
+
+# Fetched by src/download_data.py
+data/
+
+# Regenerated on every run and large: the per-customer scores
+reports/top_churn_risks.csv

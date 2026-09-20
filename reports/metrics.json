@@ -1,0 +1,232 @@
+{
+  "n_train": 5625,
+  "n_test": 1407,
+  "test_churn_rate": 0.2658137882018479,
+  "best_model": "random_forest",
+  "rival_model": "logistic_regression",
+  "cv": [
+    {
+      "model": "majority_baseline",
+      "cv_roc_auc": 0.5,
+      "cv_roc_auc_std": 0.0,
+      "cv_pr_auc": 0.2657777777777778,
+      "cv_pr_auc_std": 0.0
+    },
+    {
+      "model": "logistic_regression",
+      "cv_roc_auc": 0.8459376290621685,
+      "cv_roc_auc_std": 0.005371683863154451,
+      "cv_pr_auc": 0.6590278055656718,
+      "cv_pr_auc_std": 0.012940591818326491
+    },
+    {
+      "model": "random_forest",
+      "cv_roc_auc": 0.8472527472527472,
+      "cv_roc_auc_std": 0.0054361478598021805,
+      "cv_pr_auc": 0.6628369528414824,
+      "cv_pr_auc_std": 0.015274567194885642
+    }
+  ],
+  "test": [
+    {
+      "model": "majority_baseline",
+      "accuracy": 0.7341862117981521,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.5,
+      "pr_auc": 0.2658137882018479
+    },
+    {
+      "model": "logistic_regression",
+      "accuracy": 0.7256574271499645,
+      "precision": 0.4901315789473684,
+      "recall": 0.7967914438502673,
+      "f1": 0.6069246435845214,
+      "roc_auc": 0.8351344145860403,
+      "pr_auc": 0.6183128860330439
+    },
+    {
+      "model": "random_forest",
+      "accuracy": 0.7469793887704336,
+      "precision": 0.5157342657342657,
+      "recall": 0.7887700534759359,
+      "f1": 0.6236786469344608,
+      "roc_auc": 0.8330637103913112,
+      "pr_auc": 0.6381259679274259
+    }
+  ],
+  "bootstrap_95ci": {
+    "roc_auc": [
+      0.8102528862127168,
+      0.854741703442204
+    ],
+    "pr_auc": [
+      0.585490288488489,
+      0.6903540571398645
+    ],
+    "gap_pr_auc": [
+      -0.007580722132949372,
+      0.042213908275981635
+    ],
+    "share_best_ahead": 0.9225
+  },
+  "brier": {
+    "before": 0.16603960148795818,
+    "after": 0.14000111972691162
+  },
+  "assumptions": {
+    "offer_cost": 25.0,
+    "save_rate": 0.3,
+    "annual_revenue_per_saved_customer": 779.9917866666667
+  },
+  "recommended_threshold": 0.1,
+  "value_by_threshold": [
+    {
+      "threshold": 0.05,
+      "contacted": 1039,
+      "true_churners_reached": 363,
+      "wasted_offers": 676,
+      "net_value": 58966.105568,
+      "precision": 0.34937439846005774,
+      "recall": 0.9705882352941176,
+      "f1": 0.5138004246284501
+    },
+    {
+      "threshold": 0.1,
+      "contacted": 917,
+      "true_churners_reached": 357,
+      "wasted_offers": 560,
+      "net_value": 60612.120352,
+      "precision": 0.3893129770992366,
+      "recall": 0.9545454545454546,
+      "f1": 0.5530596436870643
+    },
+    {
+      "threshold": 0.15,
+      "contacted": 760,
+      "true_churners_reached": 329,
+      "wasted_offers": 431,
+      "net_value": 57985.189344,
+      "precision": 0.4328947368421053,
+      "recall": 0.8796791443850267,
+      "f1": 0.5802469135802469
+    },
+    {
+      "threshold": 0.2,
+      "contacted": 684,
+      "true_churners_reached": 317,
+      "wasted_offers": 367,
+      "net_value": 57077.218912,
+      "precision": 0.46345029239766083,
+      "recall": 0.8475935828877005,
+      "f1": 0.5992438563327032
+    },
+    {
+      "threshold": 0.3,
+      "contacted": 589,
+      "true_churners_reached": 299,
+      "wasted_offers": 290,
+      "net_value": 55240.263264,
+      "precision": 0.5076400679117148,
+      "recall": 0.7994652406417112,
+      "f1": 0.6209761163032191
+    },
+    {
+      "threshold": 0.4,
+      "contacted": 383,
+      "true_churners_reached": 227,
+      "wasted_offers": 156,
+      "net_value": 43542.440672,
+      "precision": 0.5926892950391645,
+      "recall": 0.606951871657754,
+      "f1": 0.5997357992073976
+    },
+    {
+      "threshold": 0.5,
+      "contacted": 289,
+      "true_churners_reached": 186,
+      "wasted_offers": 103,
+      "net_value": 36298.541696,
+      "precision": 0.643598615916955,
+      "recall": 0.49732620320855614,
+      "f1": 0.5610859728506787
+    },
+    {
+      "threshold": 0.6,
+      "contacted": 197,
+      "true_churners_reached": 135,
+      "wasted_offers": 62,
+      "net_value": 26664.66736,
+      "precision": 0.6852791878172588,
+      "recall": 0.3609625668449198,
+      "f1": 0.47285464098073554
+    },
+    {
+      "threshold": 0.7,
+      "contacted": 105,
+      "true_churners_reached": 84,
+      "wasted_offers": 21,
+      "net_value": 17030.793024,
+      "precision": 0.8,
+      "recall": 0.22459893048128343,
+      "f1": 0.35073068893528186
+    },
+    {
+      "threshold": 0.8,
+      "contacted": 69,
+      "true_churners_reached": 56,
+      "wasted_offers": 13,
+      "net_value": 11378.862016,
+      "precision": 0.8115942028985508,
+      "recall": 0.1497326203208556,
+      "f1": 0.2528216704288939
+    },
+    {
+      "threshold": 0.9,
+      "contacted": 10,
+      "true_churners_reached": 9,
+      "wasted_offers": 1,
+      "net_value": 1855.977824,
+      "precision": 0.9,
+      "recall": 0.02406417112299465,
+      "f1": 0.046875
+    }
+  ],
+  "top_features": [
+    {
+      "feature": "Contract",
+      "importance": 0.09257904518335709
+    },
+    {
+      "feature": "tenure",
+      "importance": 0.06191258632021726
+    },
+    {
+      "feature": "InternetService",
+      "importance": 0.049026025806260726
+    },
+    {
+      "feature": "TotalCharges",
+      "importance": 0.03856155411291198
+    },
+    {
+      "feature": "OnlineSecurity",
+      "importance": 0.01985735305110267
+    },
+    {
+      "feature": "TechSupport",
+      "importance": 0.019824704293078713
+    },
+    {
+      "feature": "PaperlessBilling",
+      "importance": 0.011243980602899736
+    },
+    {
+      "feature": "OnlineBackup",
+      "importance": 0.007170644875658675
+    }
+  ],
+  "oof_top_decile_churn_rate": 0.7596017069701281,
+  "overall_churn_rate": 0.26578498293515357
+}
