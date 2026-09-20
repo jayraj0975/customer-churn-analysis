@@ -1,6 +1,6 @@
 # Customer Churn Prediction and Retention Insights
 
-[![ci](https://github.com/jayraj0975/project/actions/workflows/ci.yml/badge.svg)](https://github.com/jayraj0975/project/actions/workflows/ci.yml)
+[![ci](https://github.com/jayraj0975/customer-churn-analysis/actions/workflows/ci.yml/badge.svg)](https://github.com/jayraj0975/customer-churn-analysis/actions/workflows/ci.yml)
 
 Which telecom customers are about to leave, how sure can we be, and how many of them
 should a retention team actually call? Built on IBM's public Telco Customer Churn data
