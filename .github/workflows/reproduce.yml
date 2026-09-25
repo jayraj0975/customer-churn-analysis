@@ -1,0 +1,37 @@
+name: reproduce
+# Downloads the real dataset (checksum-verified), retrains, and checks the committed report still
+# reproduces. Runs weekly and on demand. It is separate from ci.yml so that a network problem
+# affects this check only, not every pull request.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-lock.txt
+      - run: python src/download_data.py
+      - run: cp reports/metrics.json /tmp/committed_metrics.json
+      - run: MPLBACKEND=Agg python src/train.py
+      - name: The committed report still reproduces
+        run: |
+          python - <<'PY'
+          import json
+          old = json.load(open("/tmp/committed_metrics.json"))
+          new = json.load(open("reports/metrics.json"))
+          assert new["best_model"] == old["best_model"], (new["best_model"], old["best_model"])
+          assert new["threshold"]["locked"] == old["threshold"]["locked"]
+          for a, b in zip(new["test"], old["test"]):
+              assert abs(a["roc_auc"] - b["roc_auc"]) < 1e-3, (a["model"], a["roc_auc"], b["roc_auc"])
+              assert abs(a["pr_auc"] - b["pr_auc"]) < 1e-3, (a["model"], a["pr_auc"], b["pr_auc"])
+          assert new["provenance"]["data_sha256"] == old["provenance"]["data_sha256"]
+          print("reproduced")
+          PY

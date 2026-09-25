@@ -13,14 +13,23 @@ had seen the rows it is scored on:
 * **Customer risk scores** are out-of-fold: every customer is scored by a
   model that never saw them, not by one trained on them.
 * **The threshold** is chosen on a dollar value with stated assumptions, not
-  by staring at F1.
+  by staring at F1, and **only from training rows**: out-of-fold calibrated
+  probabilities for the training split pick the cut-off, the cut-off is then
+  locked, and the untouched test set is scored at that locked value. The test
+  labels never take part in choosing it (``tests/test_pipeline.py`` proves this
+  by flipping them and checking the threshold does not move).
 
 Run: ``python src/train.py``  (after ``python src/download_data.py``)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import platform
+import subprocess
+import sys
+from datetime import UTC, datetime
 
 import matplotlib
 
@@ -28,6 +37,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+import sklearn  # noqa: E402
 from sklearn.base import clone  # noqa: E402
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve  # noqa: E402
 from sklearn.dummy import DummyClassifier  # noqa: E402
@@ -41,9 +51,11 @@ from sklearn.metrics import (  # noqa: E402
 )
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_validate  # noqa: E402
 
+import common  # noqa: E402
 from common import (  # noqa: E402
     CV_FOLDS, FIGURES, N_BOOT, OFFER_COST, REPORTS, SAVE_RATE, SEED,
-    THRESHOLDS, expected_net_value, load_clean, make_pipeline, split,
+    TEST_SIZE, THRESHOLDS, expected_net_value, load_clean, make_pipeline,
+    sha256_of, split,
 )
 
 plt.rcParams.update({"figure.dpi": 130, "axes.spines.top": False,
@@ -94,6 +106,59 @@ def bootstrap(y, best: np.ndarray, rival: np.ndarray, n: int = N_BOOT) -> dict:
     return out
 
 
+def value_table(y, proba, annual_revenue: float) -> pd.DataFrame:
+    """Net dollar value at every candidate threshold, plus the same per 1,000 customers so
+    grids from different-sized samples (training vs test) can be compared."""
+    y = np.asarray(y)
+    rows = []
+    for t in THRESHOLDS:
+        v = expected_net_value(y, proba, t, annual_revenue)
+        m = metrics_at(y, proba, t)
+        rows.append({**v, "net_value_per_1000": v["net_value"] / len(y) * 1000,
+                     "precision": m["precision"], "recall": m["recall"], "f1": m["f1"]})
+    return pd.DataFrame(rows)
+
+
+def choose_threshold(y_select, proba_select, annual_revenue: float) -> tuple[float, pd.DataFrame]:
+    """Pick the threshold with the highest net value. It takes ONLY the selection data (training
+    labels and their out-of-fold probabilities), so the test labels cannot influence it."""
+    table = value_table(y_select, proba_select, annual_revenue)
+    return float(table.loc[table["net_value"].idxmax(), "threshold"]), table
+
+
+def provenance(raw_path, X: pd.DataFrame, n_rows_raw: int) -> dict:
+    """What produced these numbers: code, data, library versions and protocol."""
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=common.ROOT, capture_output=True,
+                                  text=True, check=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+    schema = [f"{c}:{X[c].dtype}" for c in X.columns]
+    return {
+        "code_commit": git("rev-parse", "HEAD"),
+        "code_dirty": bool(git("status", "--porcelain")),
+        "data_file": raw_path.name,
+        "data_sha256": sha256_of(raw_path),
+        "data_rows_raw": n_rows_raw,
+        "data_rows_clean": len(X),
+        "feature_schema_sha256": hashlib.sha256("\n".join(schema).encode()).hexdigest(),
+        "features": list(X.columns),
+        "seed": SEED, "test_size": TEST_SIZE, "cv_folds": CV_FOLDS,
+        "python": platform.python_version(), "scikit_learn": sklearn.__version__,
+        "numpy": np.__version__, "pandas": pd.__version__,
+        "created_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "protocol": {
+            "model_selection": "5-fold CV on training rows only",
+            "calibration": "isotonic, fit on training rows only",
+            "threshold_selection": "out-of-fold calibrated probabilities on training rows only, "
+                                   "locked before the test set is scored at it",
+            "final_test": "20% stratified split, scored once per model; the locked threshold is "
+                          "evaluated on it without being re-tuned",
+        },
+    }
+
+
 def fig_curves(y, scored: dict) -> None:
     fig, ax = plt.subplots(1, 2, figsize=(10, 4.2))
     for (name, p), c in zip(scored.items(), (BLUE, ORANGE)):
@@ -126,14 +191,18 @@ def fig_calibration(y, raw, cal) -> None:
     plt.close(fig)
 
 
-def fig_value(df: pd.DataFrame, best_t: float) -> None:
-    fig, ax = plt.subplots(figsize=(6, 4.2))
-    ax.plot(df["threshold"], df["net_value"], "o-", color=BLUE)
+def fig_value(val_df: pd.DataFrame, test_df: pd.DataFrame, best_t: float) -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.2))
+    ax.plot(val_df["threshold"], val_df["net_value_per_1000"], "o-", color=BLUE,
+            label="Training rows, out-of-fold (used to choose)")
+    ax.plot(test_df["threshold"], test_df["net_value_per_1000"], "s--", color=GREY,
+            label="Test set (reference only, not used to choose)")
     ax.axvline(best_t, color=ORANGE, ls="--", lw=1.2)
     ax.axhline(0, color=GREY, lw=1)
-    ax.set(title="Net value of the outreach campaign by threshold",
+    ax.set(title=f"Outreach value by threshold (locked at {best_t:.2f})",
            xlabel="Contact customers scored at or above",
-           ylabel="Net value, illustrative $ (test set)")
+           ylabel="Net value per 1,000 customers, illustrative $")
+    ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(FIGURES / "09_threshold_value.png", bbox_inches="tight")
     plt.close(fig)
@@ -152,11 +221,13 @@ def fig_importance(imp: pd.DataFrame) -> None:
     plt.close(fig)
 
 
-def main() -> None:
+def main(raw=None) -> None:
     REPORTS.mkdir(exist_ok=True)
     FIGURES.mkdir(parents=True, exist_ok=True)
 
-    X, y, ids = load_clean()
+    raw_path = raw if raw is not None else common.RAW
+    X, y, ids = load_clean(raw_path)
+    n_rows_raw = len(pd.read_csv(raw_path, usecols=[0]))
     X_tr, X_te, y_tr, y_te, id_tr, id_te = split(X, y, ids)
     y_te_arr = y_te.to_numpy()
     print(f"customers {len(X):,} | train {len(X_tr):,} | test {len(X_te):,} | "
@@ -199,15 +270,22 @@ def main() -> None:
              "after": brier_score_loss(y_te_arr, cal)}
     print(f"Brier {brier['before']:.3f} -> {brier['after']:.3f}")
 
-    # ---- 4. threshold on business value (calibrated probabilities) --------
+    # ---- 4. threshold: chosen from TRAINING rows only, then locked --------
+    # Every training row gets a calibrated probability from a model that never saw it
+    # (nested cross-validation). The threshold is picked from those and the training labels.
+    # Nothing below this block may change it.
     annual_revenue = float(X_tr["MonthlyCharges"].mean() * 12)
-    value_df = pd.DataFrame([
-        {**expected_net_value(y_te_arr, cal, t, annual_revenue),
-         **{k: v for k, v in metrics_at(y_te_arr, cal, t).items()
-            if k in ("precision", "recall", "f1")}}
-        for t in THRESHOLDS])
-    best_t = float(value_df.loc[value_df["net_value"].idxmax(), "threshold"])
-    print(value_df.round(3).to_string(index=False))
+    val_proba = cross_val_predict(
+        CalibratedClassifierCV(clone(models[best_name]), method="isotonic", cv=CV_FOLDS),
+        X_tr, y_tr, cv=cv, method="predict_proba")[:, 1]
+    best_t, validation_df = choose_threshold(y_tr.to_numpy(), val_proba, annual_revenue)
+    print(f"threshold locked at {best_t:.2f} from training rows only")
+    print(validation_df.round(3).to_string(index=False))
+
+    # ---- 4b. LOCKED. Only now is the test set scored at that threshold ------
+    test_value_df = value_table(y_te_arr, cal, annual_revenue)   # reference grid, never used to choose
+    locked = test_value_df.loc[test_value_df["threshold"] == best_t].iloc[0].to_dict()
+    print(f"test set at locked threshold {best_t:.2f}: net ${locked['net_value']:,.0f}")
 
     # ---- 5. permutation importance on the test set ------------------------
     r = permutation_importance(models[best_name], X_te, y_te, scoring="average_precision",
@@ -224,12 +302,13 @@ def main() -> None:
     # ---- outputs ---------------------------------------------------------
     fig_curves(y_te_arr, {n: scored[n] for n in (best_name, rival_name)})
     fig_calibration(y_te_arr, scored[best_name], cal)
-    fig_value(value_df, best_t)
+    fig_value(validation_df, test_value_df, best_t)
     fig_importance(imp)
 
     cv_df.merge(test_df, on="model").to_csv(REPORTS / "model_results.csv", index=False)
     imp.to_csv(REPORTS / "feature_importance.csv", index=False)
-    value_df.to_csv(REPORTS / "threshold_analysis.csv", index=False)
+    validation_df.to_csv(REPORTS / "threshold_selection_training_oof.csv", index=False)
+    test_value_df.to_csv(REPORTS / "threshold_test_reference.csv", index=False)
     risk.to_csv(REPORTS / "top_churn_risks.csv", index=False)
 
     metrics = {
@@ -238,34 +317,62 @@ def main() -> None:
         "cv": cv_rows, "test": test_rows, "bootstrap_95ci": ci, "brier": brier,
         "assumptions": {"offer_cost": OFFER_COST, "save_rate": SAVE_RATE,
                         "annual_revenue_per_saved_customer": annual_revenue},
-        "recommended_threshold": best_t,
-        "value_by_threshold": value_df.to_dict(orient="records"),
+        "threshold": {
+            "locked": best_t,
+            "selected_on": "training rows, out-of-fold calibrated probabilities",
+            "selection_grid": validation_df.to_dict(orient="records"),
+            "test_grid_reference_only": test_value_df.to_dict(orient="records"),
+            "test_at_locked": locked,
+        },
         "top_features": imp.head(8)[["feature", "importance"]].to_dict(orient="records"),
         "oof_top_decile_churn_rate": float(risk.head(len(risk) // 10)["churned"].mean()),
         "overall_churn_rate": float(y.mean()),
+        "provenance": provenance(raw_path, X, n_rows_raw),
     }
     (REPORTS / "metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
-    write_report(metrics, value_df, imp, risk)
+    write_report(metrics, validation_df, test_value_df, imp, risk)
     print("done")
 
 
-def write_report(m: dict, value_df: pd.DataFrame, imp: pd.DataFrame, risk: pd.DataFrame) -> None:
+def write_report(m: dict, validation_df: pd.DataFrame, test_df: pd.DataFrame,
+                 imp: pd.DataFrame, risk: pd.DataFrame) -> None:
     best, rival = m["best_model"], m["rival_model"]
     t = pd.DataFrame(m["test"]).set_index("model")
     cv = pd.DataFrame(m["cv"]).set_index("model")
     table = t.join(cv[["cv_pr_auc", "cv_pr_auc_std"]]).reset_index()
     ci = m["bootstrap_95ci"]
     a = m["assumptions"]
-    best_row = value_df.loc[value_df["threshold"] == m["recommended_threshold"]].iloc[0]
+    th = m["threshold"]
+    locked_t = th["locked"]
+    sel_row = validation_df.loc[validation_df["threshold"] == locked_t].iloc[0]
+    tl = th["test_at_locked"]
+    pv = m["provenance"]
+    cv_pr = {r["model"]: r["cv_pr_auc"] for r in m["cv"]}
     tied = ci["gap_pr_auc"][0] <= 0 <= ci["gap_pr_auc"][1]
+    if tied:
+        gap_sentence = (
+            f"That interval includes zero, so this test set cannot separate the two models. {best} was "
+            f"selected because it had the higher training cross-validation PR-AUC ({cv_pr[best]:.3f} against "
+            f"{cv_pr[rival]:.3f}), which is a selection outcome and not a finding that it is better on new data. "
+            "Neither model is claimed to be simpler or more interpretable here.")
+    else:
+        gap_sentence = "That interval excludes zero."
     top10 = m["oof_top_decile_churn_rate"]
     text = f"""# Model report
 
 Generated by `src/train.py`. Dataset: IBM Telco Customer Churn.
 
 **Split.** {m['n_train']:,} training and {m['n_test']:,} test customers (stratified 80/20).
-Test churn rate {m['test_churn_rate']:.1%}. Models were **selected by 5-fold cross-validation
-on the training split only**; the test set was scored once.
+Test churn rate {m['test_churn_rate']:.1%}.
+
+**Which data was used for what**
+
+| Step | Data it may use |
+|---|---|
+| Choosing between models | 5-fold cross-validation on the **training** rows only |
+| Calibrating probabilities | **Training** rows only (isotonic, cross-validated) |
+| Choosing the outreach threshold | **Training** rows only: out-of-fold calibrated probabilities and their labels |
+| Final evaluation, including the locked threshold | The **test** rows, scored once, with nothing re-tuned |
 
 ## Results
 
@@ -284,7 +391,11 @@ ROC-AUC {ci['roc_auc'][0]:.3f} to {ci['roc_auc'][1]:.3f}, PR-AUC {ci['pr_auc'][0
 
 **{best} vs {rival}.** The paired PR-AUC gap has a 95% interval of
 {ci['gap_pr_auc'][0]:+.3f} to {ci['gap_pr_auc'][1]:+.3f}; {best} was ahead in
-{ci['share_best_ahead']:.0%} of resamples. {"That interval includes zero, so the two models are statistically indistinguishable on this data. The choice of " + best + " rests on cross-validation and on being simpler and more interpretable." if tied else "That interval excludes zero."}
+{ci['share_best_ahead']:.0%} of resamples. {gap_sentence}
+
+The companion apps ([`churnapp`](https://github.com/jayraj0975/churnapp) and
+[`churn-predictor-android`](https://github.com/jayraj0975/churn-predictor-android)) do **not** serve the model selected here. They serve an
+unweighted logistic regression exported from the web app's own training script; this report is the broader model comparison.
 
 ## Probabilities: rank first, calibrate second
 
@@ -303,18 +414,28 @@ ${a['offer_cost']:.0f}, an offer keeps {a['save_rate']:.0%} of the would-be chur
 and a kept customer is worth ${a['annual_revenue_per_saved_customer']:.0f} of retained
 annual billing (the average monthly bill times 12).
 
-{value_df[['threshold', 'contacted', 'true_churners_reached', 'wasted_offers', 'net_value', 'precision', 'recall']].to_markdown(index=False, floatfmt=".2f")}
+**Selection (training rows only).** Every training row is scored by a calibrated model that never saw
+it, and the threshold with the highest net value on those rows is chosen. Values are per 1,000 customers so
+they can be compared with the test set.
+
+{validation_df[['threshold', 'contacted', 'true_churners_reached', 'wasted_offers', 'net_value_per_1000', 'precision', 'recall']].to_markdown(index=False, floatfmt=".2f")}
 
 There is a closed-form check on that. With calibrated probabilities, contacting a customer
 with churn probability *p* is worth it when *p* x (save rate x annual value) exceeds the
 offer cost, i.e. above **{a['offer_cost'] / (a['save_rate'] * a['annual_revenue_per_saved_customer']):.2f}**. The grid search lands
 next to that break-even, which is a useful sanity check on the calibration.
 
-On these assumptions the best cut-off is **{m['recommended_threshold']:.2f}**: contact
-{int(best_row['contacted'])} customers, reach {int(best_row['true_churners_reached'])} real churners, waste
-{int(best_row['wasted_offers'])} offers, net **${best_row['net_value']:,.0f}** on the test set. Change the
-assumptions in `src/common.py` and the answer moves, which is the point: the right threshold
-is a business decision, not a property of the model.
+The locked threshold is **{locked_t:.2f}**. On the training rows it contacts {int(sel_row['contacted'])} of
+{m['n_train']:,} customers at a net value of ${sel_row['net_value_per_1000']:,.0f} per 1,000 customers.
+
+**Final test (threshold locked, not re-tuned).** Scoring the untouched test set at {locked_t:.2f}: contact
+{int(tl['contacted'])} of {m['n_test']:,} customers, reach {int(tl['true_churners_reached'])} real churners, waste
+{int(tl['wasted_offers'])} offers, net **${tl['net_value']:,.0f}** (${tl['net_value_per_1000']:,.0f} per 1,000 customers; precision
+{tl['precision']:.2f}, recall {tl['recall']:.2f}). The dollar figures are assumptions, editable in `src/common.py`; the
+threshold is a business decision, not a property of the model.
+
+The test-set grid for other thresholds is saved in `reports/threshold_test_reference.csv` for reference. It was **not**
+used to choose anything, and picking the best row from it would put the test set back into model selection.
 
 ![Value by threshold](figures/09_threshold_value.png)
 
@@ -331,6 +452,19 @@ column rather than split across one-hot fragments:
 `reports/top_churn_risks.csv` scores every customer **out-of-fold**: each one is scored by a
 model trained on the other folds, never by a model that saw them. The top-scored 10% of
 customers churned at **{top10:.0%}**, against {m['overall_churn_rate']:.0%} overall.
+
+## Provenance
+
+| | |
+|---|---|
+| Code commit | `{(pv['code_commit'] or 'unknown')[:12]}`{' (working tree had uncommitted changes)' if pv['code_dirty'] else ''} |
+| Dataset | `{pv['data_file']}`, SHA-256 `{pv['data_sha256'][:16]}...`, {pv['data_rows_raw']:,} rows ({pv['data_rows_clean']:,} after cleaning) |
+| Feature schema | {len(pv['features'])} columns, hash `{pv['feature_schema_sha256'][:16]}...` |
+| Libraries | Python {pv['python']}, scikit-learn {pv['scikit_learn']}, numpy {pv['numpy']}, pandas {pv['pandas']} |
+| Seed / split / folds | {pv['seed']} / {pv['test_size']:.0%} stratified test / {pv['cv_folds']} |
+| Generated (UTC) | {pv['created_utc']} |
+
+Full detail is in `reports/metrics.json` under `provenance`.
 
 ## Honest limitations
 

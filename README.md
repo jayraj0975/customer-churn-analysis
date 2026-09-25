@@ -6,7 +6,7 @@ Which telecom customers are about to leave, how sure can we be, and how many of 
 should a retention team actually call? Built on IBM's public Telco Customer Churn data
 (7,032 customers after cleaning, 26.6% churn).
 
-**Related:** [`churnapp`](https://github.com/jayraj0975/churnapp) turns this model into an interactive web app ·
+**Related:** [`churnapp`](https://github.com/jayraj0975/churnapp) is an interactive web app that serves a separate, unweighted logistic regression (trained on the same public dataset by its own script), not the model selected here ·
 [Full model report](reports/model_report.md)
 
 ## Headline results
@@ -48,9 +48,15 @@ Precision, recall and accuracy are at the default 0.5 cut-off with class weighti
 
 Under illustrative assumptions (a $25 offer, 30% of would-be churners kept,
 $780 of annual billing per kept customer), contacting a customer is worth it once their
-churn probability passes 0.11. The grid search agrees: the best cut-off is **0.10**
-(contact 917 customers, reach 357 real churners, net $60,612 on the test set).
-Those dollar figures are assumptions, editable in `src/common.py`; the point is that the threshold comes from costs, not from the model.
+churn probability passes 0.11.
+
+The cut-off is chosen **from training rows only**: every training customer gets a calibrated probability from a
+model that never saw them, and the threshold with the highest net value on those is picked. That value, **0.10**, is then
+locked and the untouched test set is scored at it: contact 917 customers, reach 357 real churners, net **$60,612** (about $43,000
+per 1,000 customers). The test labels never take part in choosing it, and a test
+(`test_locked_threshold_is_independent_of_test_labels`) flips every test label and checks the threshold does not move.
+The dollar figures are assumptions, editable in `src/common.py`; the point is that the threshold comes from costs, not from the model.
+An earlier version picked the threshold on the test set; it happened to land on the same 0.10, but that was not a defensible way to get there.
 
 ![Value by threshold](reports/figures/09_threshold_value.png)
 
@@ -65,9 +71,9 @@ fibre-optic customers churn most, which matches the exploratory charts in `repor
 
 ```bash
 pip install -r requirements.txt        # or requirements-lock.txt for exact versions
-python src/download_data.py            # fetch the dataset (once)
+python src/download_data.py            # fetch the dataset (once); refuses a file whose SHA-256 differs
 python src/eda.py                      # exploratory charts
-python src/train.py                    # models, report, figures, risk scores (~1 minute)
+python src/train.py                    # models, report, figures, risk scores (a few minutes: the threshold step calibrates inside cross-validation)
 pip install pytest && pytest           # tests run on synthetic data, no download needed
 ```
 
@@ -77,10 +83,12 @@ src/
   download_data.py    fetch the dataset
   eda.py              exploratory charts -> reports/figures/
   train.py            selection, evaluation, calibration, threshold, importance, report
-tests/                leakage, split and value-function tests (run in CI)
+tests/                leakage, split, value-function, threshold-independence and dataset-pinning tests (offline, run in CI)
 reports/
   model_report.md     the full write-up, generated from the run
-  metrics.json        every number, machine-readable
+  metrics.json        every number, machine-readable, plus provenance (commit, data hash, library versions)
+  threshold_selection_training_oof.csv   the grid the threshold was chosen from
+  threshold_test_reference.csv           the same grid on the test set, for reference only
   figures/
 ```
 

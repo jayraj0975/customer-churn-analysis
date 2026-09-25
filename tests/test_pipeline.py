@@ -88,3 +88,104 @@ def test_higher_threshold_never_contacts_more():
     p = rng.random(200)
     counts = [expected_net_value(y, p, t, 500)["contacted"] for t in (0.1, 0.3, 0.5, 0.9)]
     assert counts == sorted(counts, reverse=True)
+
+
+# ---- threshold protocol: the test labels must not choose the threshold --------------------
+
+def _run_training(tmp_path, csv_path, name, flip_test_labels=False):
+    """Run the full training script on a CSV, writing into an isolated folder.
+
+    With ``flip_test_labels`` the partition is identical (the split is stratified on the labels, so
+    they must not be flipped before splitting) but every held-out label is inverted afterwards."""
+    import json
+
+    import train
+    out = tmp_path / name
+    (out / "figures").mkdir(parents=True)
+    saved = (train.REPORTS, train.FIGURES)
+    train.REPORTS, train.FIGURES = out, out / "figures"
+    seen = []
+    real = train.choose_threshold
+
+    def spy(y_select, proba_select, annual_revenue):
+        seen.append(np.asarray(y_select).copy())
+        return real(y_select, proba_select, annual_revenue)
+
+    real_split = train.split
+
+    def flipped_split(X, y, ids):
+        X_tr, X_te, y_tr, y_te, id_tr, id_te = real_split(X, y, ids)
+        return X_tr, X_te, y_tr, (1 - y_te), id_tr, id_te
+
+    train.choose_threshold = spy
+    if flip_test_labels:
+        train.split = flipped_split
+    try:
+        train.main(raw=csv_path)
+    finally:
+        train.REPORTS, train.FIGURES = saved
+        train.choose_threshold = real
+        train.split = real_split
+    return json.loads((out / "metrics.json").read_text()), seen
+
+
+@pytest.fixture()
+def clean_csv(tmp_path):
+    path = tmp_path / "telco.csv"
+    synthetic(n=500, seed=3).to_csv(path, index=False)
+    return path
+
+
+def test_locked_threshold_is_independent_of_test_labels(tmp_path, clean_csv):
+    """Flip every test-set label and re-run. If the test labels took any part in choosing the
+    threshold, the threshold or its selection grid would move. Only the test results may."""
+    base, seen = _run_training(tmp_path, clean_csv, "base")
+
+    # the selection step received exactly the training labels, once
+    X, y, ids = load_clean(clean_csv)
+    _, _, y_tr, _, _, _ = split(X, y, ids)
+    assert len(seen) == 1 and len(seen[0]) == len(y_tr) == base["n_train"]
+    assert sorted(seen[0].tolist()) == sorted(y_tr.tolist())
+
+    alt, _ = _run_training(tmp_path, clean_csv, "flipped", flip_test_labels=True)
+
+    assert alt["threshold"]["locked"] == base["threshold"]["locked"]
+    assert alt["threshold"]["selection_grid"] == base["threshold"]["selection_grid"]
+    assert alt["best_model"] == base["best_model"]                   # model choice is training-only too
+    # sanity: the flip really did change what the test set says
+    assert alt["threshold"]["test_at_locked"]["net_value"] != base["threshold"]["test_at_locked"]["net_value"]
+
+
+def test_report_separates_selection_from_final_test(tmp_path, clean_csv):
+    _run_training(tmp_path, clean_csv, "r")
+    text = (tmp_path / "r" / "model_report.md").read_text()
+    assert "Choosing the outreach threshold | **Training** rows only" in text
+    assert "threshold locked, not re-tuned" in text
+    assert "simpler and more interpretable" not in text
+    assert "Provenance" in text and "SHA-256" in text
+
+
+def test_provenance_records_data_hash_and_versions(tmp_path, clean_csv):
+    from common import sha256_of
+    m, _ = _run_training(tmp_path, clean_csv, "p")
+    pv = m["provenance"]
+    assert pv["data_sha256"] == sha256_of(clean_csv)
+    assert pv["scikit_learn"] and pv["feature_schema_sha256"] and pv["seed"] == 42
+
+
+# ---- dataset pinning ------------------------------------------------------------------------
+
+def test_download_verify_rejects_a_changed_file(tmp_path):
+    import download_data
+    bad = tmp_path / "telco.csv"
+    bad.write_text("customerID,Churn\nA,Yes\n")
+    with pytest.raises(download_data.ChecksumMismatch):
+        download_data.verify(bad)
+
+
+def test_download_verify_accepts_the_pinned_hash(tmp_path, monkeypatch):
+    import download_data
+    good = tmp_path / "telco.csv"
+    good.write_text("anything")
+    monkeypatch.setattr(download_data, "EXPECTED_SHA256", download_data.sha256_of(good))
+    assert download_data.verify(good) == download_data.EXPECTED_SHA256

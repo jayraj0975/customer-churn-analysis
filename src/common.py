@@ -7,6 +7,7 @@ assumptions are) are defined exactly once.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,15 @@ THRESHOLDS = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
 # facts about any real telecom; change them and the recommended threshold moves.
 OFFER_COST = 25.0   # dollars spent on each retention offer
 SAVE_RATE = 0.30    # share of contacted would-be churners the offer keeps
+
+
+def sha256_of(path: Path) -> str:
+    """SHA-256 of a file, streamed. Used to pin and record the exact dataset."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def load_clean(path: Path = RAW) -> tuple[pd.DataFrame, pd.Series, pd.Series]:

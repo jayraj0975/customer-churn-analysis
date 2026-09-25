@@ -1,7 +1,15 @@
 name: ci
-on: [push, pull_request]
+# Pull requests and pushes run offline: unit tests plus a full training run on synthetic data, so
+# an outage at the upstream dataset host can never fail a commit. The real-data reproduction runs
+# on a schedule in reproduce.yml.
+on:
+  push:
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,7 +21,3 @@ jobs:
           cache: pip
       - run: pip install -r requirements-lock.txt pytest
       - run: MPLBACKEND=Agg pytest -q
-      - name: End-to-end smoke run
-        run: |
-          python src/download_data.py
-          python src/train.py
