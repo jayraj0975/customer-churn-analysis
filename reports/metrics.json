@@ -80,119 +80,267 @@
     "save_rate": 0.3,
     "annual_revenue_per_saved_customer": 779.9917866666667
   },
-  "recommended_threshold": 0.1,
-  "value_by_threshold": [
-    {
-      "threshold": 0.05,
-      "contacted": 1039,
-      "true_churners_reached": 363,
-      "wasted_offers": 676,
-      "net_value": 58966.105568,
-      "precision": 0.34937439846005774,
-      "recall": 0.9705882352941176,
-      "f1": 0.5138004246284501
-    },
-    {
+  "threshold": {
+    "locked": 0.1,
+    "selected_on": "training rows, out-of-fold calibrated probabilities",
+    "selection_grid": [
+      {
+        "threshold": 0.05,
+        "contacted": 4194,
+        "true_churners_reached": 1468,
+        "wasted_offers": 2726,
+        "net_value": 238658.38284799998,
+        "net_value_per_1000": 42428.15695075555,
+        "precision": 0.35002384358607536,
+        "recall": 0.9819397993311036,
+        "f1": 0.5160836702408156
+      },
+      {
+        "threshold": 0.1,
+        "contacted": 3587,
+        "true_churners_reached": 1418,
+        "wasted_offers": 2169,
+        "net_value": 242133.506048,
+        "net_value_per_1000": 43045.95663075556,
+        "precision": 0.39531642040702536,
+        "recall": 0.948494983277592,
+        "f1": 0.5580480125934671
+      },
+      {
+        "threshold": 0.15,
+        "contacted": 2998,
+        "true_churners_reached": 1350,
+        "wasted_offers": 1648,
+        "net_value": 240946.67359999998,
+        "net_value_per_1000": 42834.96419555555,
+        "precision": 0.45030020013342226,
+        "recall": 0.903010033444816,
+        "f1": 0.60093478744714
+      },
+      {
+        "threshold": 0.2,
+        "contacted": 2658,
+        "true_churners_reached": 1288,
+        "wasted_offers": 1370,
+        "net_value": 234938.826368,
+        "net_value_per_1000": 41766.90246542223,
+        "precision": 0.48457486832204666,
+        "recall": 0.8615384615384616,
+        "f1": 0.6202745003611847
+      },
+      {
+        "threshold": 0.3,
+        "contacted": 2152,
+        "true_churners_reached": 1164,
+        "wasted_offers": 988,
+        "net_value": 218573.131904,
+        "net_value_per_1000": 38857.44567182223,
+        "precision": 0.5408921933085502,
+        "recall": 0.7785953177257525,
+        "f1": 0.6383328763367151
+      },
+      {
+        "threshold": 0.4,
+        "contacted": 1533,
+        "true_churners_reached": 934,
+        "wasted_offers": 599,
+        "net_value": 180228.69862399998,
+        "net_value_per_1000": 32040.657533155554,
+        "precision": 0.6092628832354859,
+        "recall": 0.6247491638795987,
+        "f1": 0.6169088507265522
+      },
+      {
+        "threshold": 0.5,
+        "contacted": 1076,
+        "true_churners_reached": 738,
+        "wasted_offers": 338,
+        "net_value": 145790.181568,
+        "net_value_per_1000": 25918.25450097778,
+        "precision": 0.6858736059479554,
+        "recall": 0.4936454849498328,
+        "f1": 0.574095682613769
+      },
+      {
+        "threshold": 0.6,
+        "contacted": 769,
+        "true_churners_reached": 544,
+        "wasted_offers": 225,
+        "net_value": 108069.659584,
+        "net_value_per_1000": 19212.383926044444,
+        "precision": 0.7074122236671001,
+        "recall": 0.36387959866220737,
+        "f1": 0.48056537102473496
+      },
+      {
+        "threshold": 0.7,
+        "contacted": 415,
+        "true_churners_reached": 325,
+        "wasted_offers": 90,
+        "net_value": 65674.1992,
+        "net_value_per_1000": 11675.41319111111,
+        "precision": 0.7831325301204819,
+        "recall": 0.21739130434782608,
+        "f1": 0.3403141361256545
+      },
+      {
+        "threshold": 0.8,
+        "contacted": 244,
+        "true_churners_reached": 205,
+        "wasted_offers": 39,
+        "net_value": 41869.49488,
+        "net_value_per_1000": 7443.465756444444,
+        "precision": 0.8401639344262295,
+        "recall": 0.13712374581939799,
+        "f1": 0.2357676825761932
+      },
+      {
+        "threshold": 0.9,
+        "contacted": 53,
+        "true_churners_reached": 47,
+        "wasted_offers": 6,
+        "net_value": 9672.884192,
+        "net_value_per_1000": 1719.6238563555555,
+        "precision": 0.8867924528301887,
+        "recall": 0.031438127090301006,
+        "f1": 0.060723514211886306
+      }
+    ],
+    "test_grid_reference_only": [
+      {
+        "threshold": 0.05,
+        "contacted": 1039,
+        "true_churners_reached": 363,
+        "wasted_offers": 676,
+        "net_value": 58966.105568,
+        "net_value_per_1000": 41909.10132764748,
+        "precision": 0.34937439846005774,
+        "recall": 0.9705882352941176,
+        "f1": 0.5138004246284501
+      },
+      {
+        "threshold": 0.1,
+        "contacted": 917,
+        "true_churners_reached": 357,
+        "wasted_offers": 560,
+        "net_value": 60612.120352,
+        "net_value_per_1000": 43078.9767960199,
+        "precision": 0.3893129770992366,
+        "recall": 0.9545454545454546,
+        "f1": 0.5530596436870643
+      },
+      {
+        "threshold": 0.15,
+        "contacted": 760,
+        "true_churners_reached": 329,
+        "wasted_offers": 431,
+        "net_value": 57985.189344,
+        "net_value_per_1000": 41211.932724946695,
+        "precision": 0.4328947368421053,
+        "recall": 0.8796791443850267,
+        "f1": 0.5802469135802469
+      },
+      {
+        "threshold": 0.2,
+        "contacted": 684,
+        "true_churners_reached": 317,
+        "wasted_offers": 367,
+        "net_value": 57077.218912,
+        "net_value_per_1000": 40566.609034825866,
+        "precision": 0.46345029239766083,
+        "recall": 0.8475935828877005,
+        "f1": 0.5992438563327032
+      },
+      {
+        "threshold": 0.3,
+        "contacted": 589,
+        "true_churners_reached": 299,
+        "wasted_offers": 290,
+        "net_value": 55240.263264,
+        "net_value_per_1000": 39261.02577398721,
+        "precision": 0.5076400679117148,
+        "recall": 0.7994652406417112,
+        "f1": 0.6209761163032191
+      },
+      {
+        "threshold": 0.4,
+        "contacted": 383,
+        "true_churners_reached": 227,
+        "wasted_offers": 156,
+        "net_value": 43542.440672,
+        "net_value_per_1000": 30947.00829566453,
+        "precision": 0.5926892950391645,
+        "recall": 0.606951871657754,
+        "f1": 0.5997357992073976
+      },
+      {
+        "threshold": 0.5,
+        "contacted": 289,
+        "true_churners_reached": 186,
+        "wasted_offers": 103,
+        "net_value": 36298.541696,
+        "net_value_per_1000": 25798.537097370292,
+        "precision": 0.643598615916955,
+        "recall": 0.49732620320855614,
+        "f1": 0.5610859728506787
+      },
+      {
+        "threshold": 0.6,
+        "contacted": 197,
+        "true_churners_reached": 135,
+        "wasted_offers": 62,
+        "net_value": 26664.66736,
+        "net_value_per_1000": 18951.43380241649,
+        "precision": 0.6852791878172588,
+        "recall": 0.3609625668449198,
+        "f1": 0.47285464098073554
+      },
+      {
+        "threshold": 0.7,
+        "contacted": 105,
+        "true_churners_reached": 84,
+        "wasted_offers": 21,
+        "net_value": 17030.793024,
+        "net_value_per_1000": 12104.330507462686,
+        "precision": 0.8,
+        "recall": 0.22459893048128343,
+        "f1": 0.35073068893528186
+      },
+      {
+        "threshold": 0.8,
+        "contacted": 69,
+        "true_churners_reached": 56,
+        "wasted_offers": 13,
+        "net_value": 11378.862016,
+        "net_value_per_1000": 8087.321972992182,
+        "precision": 0.8115942028985508,
+        "recall": 0.1497326203208556,
+        "f1": 0.2528216704288939
+      },
+      {
+        "threshold": 0.9,
+        "contacted": 10,
+        "true_churners_reached": 9,
+        "wasted_offers": 1,
+        "net_value": 1855.977824,
+        "net_value_per_1000": 1319.1029310589909,
+        "precision": 0.9,
+        "recall": 0.02406417112299465,
+        "f1": 0.046875
+      }
+    ],
+    "test_at_locked": {
       "threshold": 0.1,
-      "contacted": 917,
-      "true_churners_reached": 357,
-      "wasted_offers": 560,
+      "contacted": 917.0,
+      "true_churners_reached": 357.0,
+      "wasted_offers": 560.0,
       "net_value": 60612.120352,
+      "net_value_per_1000": 43078.9767960199,
       "precision": 0.3893129770992366,
       "recall": 0.9545454545454546,
       "f1": 0.5530596436870643
-    },
-    {
-      "threshold": 0.15,
-      "contacted": 760,
-      "true_churners_reached": 329,
-      "wasted_offers": 431,
-      "net_value": 57985.189344,
-      "precision": 0.4328947368421053,
-      "recall": 0.8796791443850267,
-      "f1": 0.5802469135802469
-    },
-    {
-      "threshold": 0.2,
-      "contacted": 684,
-      "true_churners_reached": 317,
-      "wasted_offers": 367,
-      "net_value": 57077.218912,
-      "precision": 0.46345029239766083,
-      "recall": 0.8475935828877005,
-      "f1": 0.5992438563327032
-    },
-    {
-      "threshold": 0.3,
-      "contacted": 589,
-      "true_churners_reached": 299,
-      "wasted_offers": 290,
-      "net_value": 55240.263264,
-      "precision": 0.5076400679117148,
-      "recall": 0.7994652406417112,
-      "f1": 0.6209761163032191
-    },
-    {
-      "threshold": 0.4,
-      "contacted": 383,
-      "true_churners_reached": 227,
-      "wasted_offers": 156,
-      "net_value": 43542.440672,
-      "precision": 0.5926892950391645,
-      "recall": 0.606951871657754,
-      "f1": 0.5997357992073976
-    },
-    {
-      "threshold": 0.5,
-      "contacted": 289,
-      "true_churners_reached": 186,
-      "wasted_offers": 103,
-      "net_value": 36298.541696,
-      "precision": 0.643598615916955,
-      "recall": 0.49732620320855614,
-      "f1": 0.5610859728506787
-    },
-    {
-      "threshold": 0.6,
-      "contacted": 197,
-      "true_churners_reached": 135,
-      "wasted_offers": 62,
-      "net_value": 26664.66736,
-      "precision": 0.6852791878172588,
-      "recall": 0.3609625668449198,
-      "f1": 0.47285464098073554
-    },
-    {
-      "threshold": 0.7,
-      "contacted": 105,
-      "true_churners_reached": 84,
-      "wasted_offers": 21,
-      "net_value": 17030.793024,
-      "precision": 0.8,
-      "recall": 0.22459893048128343,
-      "f1": 0.35073068893528186
-    },
-    {
-      "threshold": 0.8,
-      "contacted": 69,
-      "true_churners_reached": 56,
-      "wasted_offers": 13,
-      "net_value": 11378.862016,
-      "precision": 0.8115942028985508,
-      "recall": 0.1497326203208556,
-      "f1": 0.2528216704288939
-    },
-    {
-      "threshold": 0.9,
-      "contacted": 10,
-      "true_churners_reached": 9,
-      "wasted_offers": 1,
-      "net_value": 1855.977824,
-      "precision": 0.9,
-      "recall": 0.02406417112299465,
-      "f1": 0.046875
     }
-  ],
+  },
   "top_features": [
     {
       "feature": "Contract",
@@ -228,5 +376,49 @@
     }
   ],
   "oof_top_decile_churn_rate": 0.7596017069701281,
-  "overall_churn_rate": 0.26578498293515357
+  "overall_churn_rate": 0.26578498293515357,
+  "provenance": {
+    "code_commit": "cff019c2b39f1362bb04605d4fc871cc3dc6f0eb",
+    "code_dirty": true,
+    "data_file": "telco_customer_churn.csv",
+    "data_sha256": "3d5c233415c1b42bdea7172c73e620819f507f0a8294bc2337a1d8a8877feef0",
+    "data_rows_raw": 7043,
+    "data_rows_clean": 7032,
+    "feature_schema_sha256": "d92230f7c83bd12ca54434d5bb9859b05831b3d7dde2346f75cd9bd9601276cb",
+    "features": [
+      "gender",
+      "SeniorCitizen",
+      "Partner",
+      "Dependents",
+      "tenure",
+      "PhoneService",
+      "MultipleLines",
+      "InternetService",
+      "OnlineSecurity",
+      "OnlineBackup",
+      "DeviceProtection",
+      "TechSupport",
+      "StreamingTV",
+      "StreamingMovies",
+      "Contract",
+      "PaperlessBilling",
+      "PaymentMethod",
+      "MonthlyCharges",
+      "TotalCharges"
+    ],
+    "seed": 42,
+    "test_size": 0.2,
+    "cv_folds": 5,
+    "python": "3.12.3",
+    "scikit_learn": "1.9.1",
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "created_utc": "2026-09-25T08:08:00Z",
+    "protocol": {
+      "model_selection": "5-fold CV on training rows only",
+      "calibration": "isotonic, fit on training rows only",
+      "threshold_selection": "out-of-fold calibrated probabilities on training rows only, locked before the test set is scored at it",
+      "final_test": "20% stratified split, scored once per model; the locked threshold is evaluated on it without being re-tuned"
+    }
+  }
 }

@@ -137,7 +137,7 @@ def provenance(raw_path, X: pd.DataFrame, n_rows_raw: int) -> dict:
     schema = [f"{c}:{X[c].dtype}" for c in X.columns]
     return {
         "code_commit": git("rev-parse", "HEAD"),
-        "code_dirty": bool(git("status", "--porcelain")),
+        "code_dirty": bool(git("status", "--porcelain", "--", "src", "requirements.txt", "requirements-lock.txt")),
         "data_file": raw_path.name,
         "data_sha256": sha256_of(raw_path),
         "data_rows_raw": n_rows_raw,
