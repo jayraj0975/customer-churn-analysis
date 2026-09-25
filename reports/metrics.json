@@ -378,8 +378,8 @@
   "oof_top_decile_churn_rate": 0.7596017069701281,
   "overall_churn_rate": 0.26578498293515357,
   "provenance": {
-    "code_commit": "cff019c2b39f1362bb04605d4fc871cc3dc6f0eb",
-    "code_dirty": true,
+    "code_commit": "8cb1062343e0ad4a09b17d2966ccc0872bac1c00",
+    "code_dirty": false,
     "data_file": "telco_customer_churn.csv",
     "data_sha256": "3d5c233415c1b42bdea7172c73e620819f507f0a8294bc2337a1d8a8877feef0",
     "data_rows_raw": 7043,
@@ -413,7 +413,7 @@
     "scikit_learn": "1.9.1",
     "numpy": "2.5.3",
     "pandas": "3.0.6",
-    "created_utc": "2026-09-25T08:08:00Z",
+    "created_utc": "2026-09-25T08:09:43Z",
     "protocol": {
       "model_selection": "5-fold CV on training rows only",
       "calibration": "isotonic, fit on training rows only",

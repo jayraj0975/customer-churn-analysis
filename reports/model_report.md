@@ -113,12 +113,12 @@ customers churned at **76%**, against 27% overall.
 
 | | |
 |---|---|
-| Code commit | `cff019c2b39f` (working tree had uncommitted changes) |
+| Code commit | `8cb1062343e0` |
 | Dataset | `telco_customer_churn.csv`, SHA-256 `3d5c233415c1b42b...`, 7,043 rows (7,032 after cleaning) |
 | Feature schema | 19 columns, hash `d92230f7c83bd12c...` |
 | Libraries | Python 3.12.3, scikit-learn 1.9.1, numpy 2.5.3, pandas 3.0.6 |
 | Seed / split / folds | 42 / 20% stratified test / 5 |
-| Generated (UTC) | 2026-09-25T08:08:00Z |
+| Generated (UTC) | 2026-09-25T08:09:43Z |
 
 Full detail is in `reports/metrics.json` under `provenance`.
 
